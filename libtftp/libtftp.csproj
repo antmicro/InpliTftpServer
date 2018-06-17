@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <Description>Telenor Inpli TFTP Server Module
+
+A simple TFTP server library module for use within the .NET platform.
+
+</Description>
+    <Copyright>2018 Telenor Inpli AS</Copyright>
+  </PropertyGroup>
+
+</Project>
