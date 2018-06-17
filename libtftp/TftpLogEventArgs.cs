@@ -19,7 +19,7 @@ namespace libtftp
         /// <summary>
         /// The severity level of the message
         /// </summary>
-        public ETftpLogSeverity LogLevel { get; set; }
+        public ETftpLogSeverity Severity { get; set; }
 
         /// <summary>
         /// The message to log

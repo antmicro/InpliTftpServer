@@ -11,6 +11,7 @@ namespace libtftp
     using System.Net;
     using System.Net.NetworkInformation;
     using System.Net.Sockets;
+    using System.Threading.Tasks;
     using System.Timers;
 
     public class TftpServer : IDisposable
@@ -48,7 +49,7 @@ namespace libtftp
         /// <summary>
         /// When a read request comes in, this event is a callback to provide the stream to be transferred
         /// </summary>
-        public EventHandler<TftpGetStreamEventArgs> GetStream;
+        public event Func<object, TftpGetStreamEventArgs, Task> GetStream;
 
         /// <summary>
         /// The maximum period of idle time to retain a session in memory before cleaning it up
@@ -63,7 +64,7 @@ namespace libtftp
         /// <summary>
         /// The log level for the server to reach before logging.
         /// </summary>
-        public ETftpLogSeverity LogLevel { get; set; } = ETftpLogSeverity.Informational;
+        public ETftpLogSeverity LogSeverity { get; set; } = ETftpLogSeverity.Informational;
 
         private UdpClient Socket { get; set; }
 
@@ -114,8 +115,9 @@ namespace libtftp
                     now.Subtract(x.Value.IdleSince) > RetransmissionTimeout
                  );
 
-            foreach (var session in retransmitSessions)
-                session.Value.Retransmit();
+            var handlerTasks = retransmitSessions.Select(x => Task.Factory.StartNew(() => x.Value.RetransmitAsync()));
+
+            Task.WhenAll(handlerTasks);
         }
 
         private void OnUdpData(IAsyncResult result)
@@ -134,7 +136,19 @@ namespace libtftp
                     Sessions[source] = session;
                 }
 
-                session.OnReceive(messageData);
+                var receiveTask =
+                    Task.Factory.StartNew(
+                        async () => {
+                            try
+                            {
+                                await session.OnReceiveAsync(messageData);
+                            }
+                            catch (Exception e)
+                            {
+                                LogError("Internal error: " + e.Message);
+                            }
+                        }
+                    );
             }
             catch (Exception e)
             {
@@ -150,7 +164,7 @@ namespace libtftp
         /// <param name="remoteHost">The remote host requesting the transfer</param>
         /// <param name="filename">The filename requested by the remote host</param>
         /// <returns></returns>
-        internal Stream GetReadStream(IPEndPoint remoteHost, string filename)
+        internal async Task<Stream> GetReadStream(IPEndPoint remoteHost, string filename)
         {
             if(GetStream == null)
             {
@@ -164,10 +178,15 @@ namespace libtftp
                 RemoteHost = remoteHost
             };
 
-            GetStream.Invoke(
-                this,
-                eventArgs
-            );
+            Delegate[] invocationList = GetStream.GetInvocationList();
+            Task[] handlerTasks = new Task[invocationList.Length];
+
+            for (int i = 0; i < invocationList.Length; i++)
+            {
+                handlerTasks[i] = ((Func<object, TftpGetStreamEventArgs, Task>)invocationList[i])(this, eventArgs);
+            }
+
+            await Task.WhenAll(handlerTasks);
 
             if(eventArgs.Result == null)
             {
@@ -258,13 +277,13 @@ namespace libtftp
         /// <param name="message">The message to log</param>
         internal void LogError(string message)
         {
-            if (Log != null && LogLevel >= ETftpLogSeverity.Error)
+            if (Log != null && LogSeverity >= ETftpLogSeverity.Error)
             {
                 Log.Invoke(
                     this,
                     new TftpLogEventArgs
                     {
-                        LogLevel = ETftpLogSeverity.Error,
+                        Severity = ETftpLogSeverity.Error,
                         TimeStamp = DateTimeOffset.Now,
                         Message = message
                     }
@@ -278,13 +297,13 @@ namespace libtftp
         /// <param name="message">The message to log</param>
         internal void LogInfo(string message)
         {
-            if (Log != null && LogLevel >= ETftpLogSeverity.Informational)
+            if (Log != null && LogSeverity >= ETftpLogSeverity.Informational)
             {
                 Log.Invoke(
                     this,
                     new TftpLogEventArgs
                     {
-                        LogLevel = ETftpLogSeverity.Informational,
+                        Severity = ETftpLogSeverity.Informational,
                         TimeStamp = DateTimeOffset.Now,
                         Message = message
                     }
@@ -298,13 +317,13 @@ namespace libtftp
         /// <param name="message">The message to log</param>
         internal void LogDebug(string message)
         {
-            if (Log != null && LogLevel >= ETftpLogSeverity.Debug)
+            if (Log != null && LogSeverity >= ETftpLogSeverity.Debug)
             {
                 Log.Invoke(
                     this,
                     new TftpLogEventArgs
                     {
-                        LogLevel = ETftpLogSeverity.Debug,
+                        Severity = ETftpLogSeverity.Debug,
                         TimeStamp = DateTimeOffset.Now,
                         Message = message
                     }

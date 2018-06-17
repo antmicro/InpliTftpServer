@@ -9,6 +9,7 @@ namespace libtftp
     using System.Linq;
     using System.Net;
     using System.Text;
+    using System.Threading.Tasks;
 
     /// <summary>
     /// An instance of an individual TFTP session
@@ -116,7 +117,7 @@ namespace libtftp
         /// Receive and process a packet
         /// </summary>
         /// <param name="messageData">The buffer received, it must be trimmed</param>
-        internal void OnReceive(byte[] messageData)
+        internal async Task OnReceiveAsync(byte[] messageData)
         {
             IdleSince = DateTimeOffset.Now;
 
@@ -132,7 +133,7 @@ namespace libtftp
                     break;
 
                 case ETftpPacketType.ReadRequest:
-                    OnReadRequest(messageData);
+                    await OnReadRequestAsync(messageData);
                     break;
 
                 case ETftpPacketType.Data:
@@ -140,7 +141,7 @@ namespace libtftp
                     break;
 
                 case ETftpPacketType.Acknowledgement:
-                    OnAcknowledge(messageData);
+                    await OnAcknowledgeAsync(messageData);
                     break;
 
                 case ETftpPacketType.Error:
@@ -172,11 +173,11 @@ namespace libtftp
             Parent.UnregisterSession(this);
         }
 
-        private void OnAcknowledge(byte[] messageData)
+        private async Task OnAcknowledgeAsync(byte[] messageData)
         {
             if (messageData.Length < 4)
             {
-                Retransmit();
+                await RetransmitAsync();
                 return;
             }
 
@@ -187,17 +188,18 @@ namespace libtftp
             }
 
             TransmitBufferLength = 0;
-            Retransmit();
+            await RetransmitAsync();
         }
 
         /// <summary>
         /// Used to transmit or retransmit the current buffer
         /// </summary>
-        internal void Retransmit()
+        internal async Task RetransmitAsync()
         {
             if(TransmitBufferLength == 0)
             {
-                int bytesRead = TransferStream.Read(TransmitBuffer, 4, 512);
+                int bytesRead = await TransferStream.ReadAsync(TransmitBuffer, 4, 512);
+
                 TransmitBufferLength = bytesRead + 4;
                 CurrentBlock++;
                 BlockTransmitCount = 0;
@@ -220,7 +222,7 @@ namespace libtftp
             Parent.Transmit(RemoteHost, TransmitBuffer, TransmitBufferLength);
         }
 
-        private void OnReadRequest(byte[] messageData)
+        private async Task OnReadRequestAsync(byte[] messageData)
         {
             LogDebug("Received read request");
 
@@ -242,7 +244,7 @@ namespace libtftp
             }
             else
             {
-                TransferStream = Parent.GetReadStream(RemoteHost, request.Filename);
+                TransferStream = await Parent.GetReadStream(RemoteHost, request.Filename);
                 if(TransferStream == null)
                 {
                     TransmitError(ETftpErrorType.FileNotFound, "File not found");
@@ -252,7 +254,7 @@ namespace libtftp
                 Operation = ETftpOperationType.ReadOperation;
                 Filename = request.Filename;
                 TransferRequestInitiated = IdleSince;
-                Retransmit();
+                await RetransmitAsync();
             }
         }
 

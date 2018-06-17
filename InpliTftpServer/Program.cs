@@ -6,15 +6,17 @@ namespace InpliTftpServer
 {
     using System;
     using System.IO;
+    using System.Threading.Tasks;
 
     class Program
     {
         static void Main(string[] args)
         {
-            libtftp.TftpServer.Instance.LogLevel = libtftp.ETftpLogSeverity.Debug;
+            libtftp.TftpServer.Instance.LogSeverity = libtftp.ETftpLogSeverity.Debug;
 
-            libtftp.TftpServer.Instance.FileReceived += 
-                new EventHandler<libtftp.TftpTransferCompleteEventArgs>((sender, ev) => {
+            libtftp.TftpServer.Instance.FileReceived +=
+                new EventHandler<libtftp.TftpTransferCompleteEventArgs>((sender, ev) =>
+                {
                     Console.WriteLine(
                         "Received file from " +
                         ev.RemoteHost.ToString() +
@@ -26,19 +28,20 @@ namespace InpliTftpServer
             );
 
             libtftp.TftpServer.Instance.FileTransmitted +=
-                new EventHandler<libtftp.TftpTransferCompleteEventArgs>((sender, ev) => {
-                Console.WriteLine(
-                    "Transmitted file to " +
-                    ev.RemoteHost.ToString() +
-                    " called [" + ev.Filename + "]"                    
-                    );
+                new EventHandler<libtftp.TftpTransferCompleteEventArgs>((sender, ev) =>
+                {
+                    Console.WriteLine(
+                        "Transmitted file to " +
+                        ev.RemoteHost.ToString() +
+                        " called [" + ev.Filename + "]"
+                        );
                 }
             );
 
             libtftp.TftpServer.Instance.Log +=
                 new EventHandler<libtftp.TftpLogEventArgs>((sender, ev) =>
                 {
-                    switch (ev.LogLevel)
+                    switch (ev.Severity)
                     {
                         case libtftp.ETftpLogSeverity.Error:
                             Console.ForegroundColor = ConsoleColor.Red;
@@ -61,10 +64,11 @@ namespace InpliTftpServer
                 }
             );
 
-            libtftp.TftpServer.Instance.GetStream +=
-                new EventHandler<libtftp.TftpGetStreamEventArgs>((sender, ev) =>
+            libtftp.TftpServer.Instance.GetStream += new Func<object, libtftp.TftpGetStreamEventArgs, Task>(
+                async (sender, ev) =>
                 {
-                    ev.Result = new FileStream(@"Sample Data/LorumIpsum.txt", FileMode.Open, FileAccess.Read);
+                    var buffer = await File.ReadAllBytesAsync(@"Sample Data/LorumIpsum.txt");
+                    ev.Result = new MemoryStream(buffer);
                 }
             );
 
