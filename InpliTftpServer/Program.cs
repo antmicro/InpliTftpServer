@@ -64,7 +64,7 @@ namespace InpliTftpServer
             libtftp.TftpServer.Instance.GetStream +=
                 new EventHandler<libtftp.TftpGetStreamEventArgs>((sender, ev) =>
                 {
-                    ev.Result = new FileStream(@"C:\Temp\Teapot.Config", FileMode.Open, FileAccess.Read);
+                    ev.Result = new FileStream(@"Sample Data/LorumIpsum.txt", FileMode.Open, FileAccess.Read);
                 }
             );
 
