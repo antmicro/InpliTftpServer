@@ -10,30 +10,74 @@ namespace libtftp
     using System.Net;
     using System.Text;
 
+    /// <summary>
+    /// An instance of an individual TFTP session
+    /// </summary>
     internal class TftpSession
     {
-        public IPEndPoint RemoteHost { get; private set; }
-
+        /// <summary>
+        /// The parent/owner TftpServer object
+        /// </summary>
         public TftpServer Parent { get; private set; }
 
-        private int CurrentBlock { get; set; } = 0;
+        /// <summary>
+        /// The remote host which initiated the session
+        /// </summary>
+        public IPEndPoint RemoteHost { get; private set; }
 
-        public ETftpOperationType Operation { get; set; } = ETftpOperationType.Unspecified;
+        /// <summary>
+        /// The operation requested by the remote host
+        /// </summary>
+        public ETftpOperationType Operation { get; private set; } = ETftpOperationType.Unspecified;
 
-        public string Filename { get; set; }
+        /// <summary>
+        /// The filename requested to send or receive
+        /// </summary>
+        public string Filename { get; private set; }
 
-        internal MemoryStream ReceiveStream { get; set; }
+        /// <summary>
+        /// When was the transfer request received
+        /// </summary>
+        public DateTimeOffset TransferRequestInitiated { get; private set; }
 
-        internal Stream TransmitStream { get; set; }
+        /// <summary>
+        /// When was the last packet received from the remote host
+        /// </summary>
+        public DateTimeOffset IdleSince { get; private set; }
 
-        public DateTimeOffset TransferRequestInitiated { get; set; }
+        /// <summary>
+        /// The maximum retransmit count
+        /// </summary>
+        public int MaximumRetries { get; private set; } = 5;
 
-        public DateTimeOffset IdleSince { get; set; }
+        internal Stream TransferStream { get; set; }
 
+        /// <summary>
+        /// The current block number
+        /// </summary>
+        private long CurrentBlock { get; set; } = 0;
+
+        /// <summary>
+        /// The time when the last status debug message was logged
+        /// </summary>
         private DateTimeOffset LastMessageTime { get; set; } = DateTimeOffset.MinValue;
 
+        /// <summary>
+        /// The number of bytes received so far
+        /// </summary>
         private long BytesReceived { get; set; }
 
+        private byte[] TransmitBuffer = new byte[516];
+
+        private int TransmitBufferLength = 0;
+
+        private int BlockTransmitCount = 0;
+
+        /// <summary>
+        /// Constructor
+        /// </summary>
+        /// <param name="parent">The owner of this session</param>
+        /// <param name="remoteHost">The remote host which this session correlates to</param>
         internal TftpSession(TftpServer parent, IPEndPoint remoteHost)
         {
             Parent = parent;
@@ -41,21 +85,37 @@ namespace libtftp
             IdleSince = DateTimeOffset.Now;
         }
 
+        /// <summary>
+        /// Syslog an error
+        /// </summary>
+        /// <param name="message">The message to log</param>
         private void LogError(string message)
         {
             Parent.LogError(RemoteHost.ToString() + ": " + message);
         }
 
+        /// <summary>
+        /// Syslog an informative message
+        /// </summary>
+        /// <param name="message">The message to log</param>
         private void LogInfo(string message)
         {
             Parent.LogInfo(RemoteHost.ToString() + ": " + message);
         }
 
+        /// <summary>
+        /// Syslog a debug message
+        /// </summary>
+        /// <param name="message">The message to log</param>
         private void LogDebug(string message)
         {
             Parent.LogDebug(RemoteHost.ToString() + ": " + message);
         }
 
+        /// <summary>
+        /// Receive and process a packet
+        /// </summary>
+        /// <param name="messageData">The buffer received, it must be trimmed</param>
         internal void OnReceive(byte[] messageData)
         {
             IdleSince = DateTimeOffset.Now;
@@ -112,10 +172,6 @@ namespace libtftp
             Parent.UnregisterSession(this);
         }
 
-        private byte[] TransmitBuffer = new byte[516];
-        private int TransmitBufferLength = 0;
-        private int BlockTransmitCount = 0;
-
         private void OnAcknowledge(byte[] messageData)
         {
             if (messageData.Length < 4)
@@ -126,7 +182,7 @@ namespace libtftp
 
             if(TransmitBufferLength < 516)
             {
-                Parent.ReadRequestComplete(this);
+                Parent.TransferComplete(this);
                 return;
             }
 
@@ -134,24 +190,34 @@ namespace libtftp
             Retransmit();
         }
 
+        /// <summary>
+        /// Used to transmit or retransmit the current buffer
+        /// </summary>
         internal void Retransmit()
         {
             if(TransmitBufferLength == 0)
             {
-                int bytesRead = TransmitStream.Read(TransmitBuffer, 4, 512);
+                int bytesRead = TransferStream.Read(TransmitBuffer, 4, 512);
                 TransmitBufferLength = bytesRead + 4;
                 CurrentBlock++;
                 BlockTransmitCount = 0;
                 TransmitBuffer.Write16BE(0, (int)ETftpPacketType.Data);
-                TransmitBuffer.Write16BE(2, CurrentBlock);
+                TransmitBuffer.Write16BE(2, (int)(CurrentBlock & 0xFFFF));
             }
             else
             {
                 BlockTransmitCount++;
+                if(BlockTransmitCount > MaximumRetries)
+                {
+                    TransmitError(ETftpErrorType.NotDefined, "Maximum rety count exceeded");
+                    LogError("Maximum retry count exceeded");
+                    Parent.UnregisterSession(this);
+
+                    return;
+                }
             }
 
             Parent.Transmit(RemoteHost, TransmitBuffer, TransmitBufferLength);
-
         }
 
         private void OnReadRequest(byte[] messageData)
@@ -166,7 +232,7 @@ namespace libtftp
             {
                 TransmitError(ETftpErrorType.IllegalOperation, "Already processing WriteRequest");
             }
-            else if (TransmitStream != null)
+            else if (TransferStream != null)
             {
                 TransmitError(ETftpErrorType.IllegalOperation, "Read request already in progress");
             }
@@ -176,8 +242,8 @@ namespace libtftp
             }
             else
             {
-                TransmitStream = Parent.GetReadStream(RemoteHost, request.Filename);
-                if(TransmitStream == null)
+                TransferStream = Parent.GetReadStream(RemoteHost, request.Filename);
+                if(TransferStream == null)
                 {
                     TransmitError(ETftpErrorType.FileNotFound, "File not found");
                     return;
@@ -215,7 +281,7 @@ namespace libtftp
             CurrentBlock++;
             TransmitAck(blockNumber);
 
-            if(ReceiveStream == null)
+            if(TransferStream == null)
             {
                 if(CurrentBlock != 1)
                 {
@@ -224,10 +290,10 @@ namespace libtftp
                     Parent.UnregisterSession(this);
                 }
 
-                ReceiveStream = new MemoryStream();
+                TransferStream = new MemoryStream();
             }
 
-            ReceiveStream.Write(messageData, 4, messageData.Length - 4);
+            TransferStream.Write(messageData, 4, messageData.Length - 4);
 
             if (messageData.Length != 516)
             {
@@ -322,7 +388,7 @@ namespace libtftp
             {
                 TransmitError(ETftpErrorType.IllegalOperation, "Already processing ReadRequest");
             }
-            else if (ReceiveStream != null)
+            else if (TransferStream != null)
             {
                 TransmitError(ETftpErrorType.IllegalOperation, "Write request already in progress");
             }
@@ -332,7 +398,7 @@ namespace libtftp
             }
             else
             {
-                TransmitAck(CurrentBlock);
+                TransmitAck((int)(CurrentBlock & 0xFFFF));
 
                 Operation = ETftpOperationType.WriteOperation;
                 Filename = request.Filename;

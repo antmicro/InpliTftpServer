@@ -11,16 +11,26 @@ namespace InpliTftpServer
     {
         static void Main(string[] args)
         {
-            libtftp.TftpServer.Instance.LogLevel = libtftp.ETftpLogLevel.Debug;
+            libtftp.TftpServer.Instance.LogLevel = libtftp.ETftpLogSeverity.Debug;
 
             libtftp.TftpServer.Instance.FileReceived += 
-                new EventHandler<libtftp.TftpFileReceivedEventArgs>((sender, ev) => {
+                new EventHandler<libtftp.TftpTransferCompleteEventArgs>((sender, ev) => {
                     Console.WriteLine(
                         "Received file from " +
-                        ev.ReceivedFrom.ToString() +
+                        ev.RemoteHost.ToString() +
                         " called [" + ev.Filename + "] with " +
                         ev.Stream.Length.ToString() +
                         " bytes"
+                    );
+                }
+            );
+
+            libtftp.TftpServer.Instance.FileTransmitted +=
+                new EventHandler<libtftp.TftpTransferCompleteEventArgs>((sender, ev) => {
+                Console.WriteLine(
+                    "Transmitted file to " +
+                    ev.RemoteHost.ToString() +
+                    " called [" + ev.Filename + "]"                    
                     );
                 }
             );
@@ -30,11 +40,11 @@ namespace InpliTftpServer
                 {
                     switch (ev.LogLevel)
                     {
-                        case libtftp.ETftpLogLevel.Error:
+                        case libtftp.ETftpLogSeverity.Error:
                             Console.ForegroundColor = ConsoleColor.Red;
                             break;
 
-                        case libtftp.ETftpLogLevel.Debug:
+                        case libtftp.ETftpLogSeverity.Debug:
                             Console.ForegroundColor = ConsoleColor.Gray;
                             break;
 

@@ -6,10 +6,24 @@ namespace libtftp
 {
     using System;
 
+    /// <summary>
+    /// Event argments for logging events
+    /// </summary>
     public class TftpLogEventArgs : EventArgs
     {
+        /// <summary>
+        /// The timestamp of the log message
+        /// </summary>
         public DateTimeOffset TimeStamp { get; set; }
-        public ETftpLogLevel LogLevel { get; set; }
+        
+        /// <summary>
+        /// The severity level of the message
+        /// </summary>
+        public ETftpLogSeverity LogLevel { get; set; }
+
+        /// <summary>
+        /// The message to log
+        /// </summary>
         public string Message { get; set; }
     }
 }
