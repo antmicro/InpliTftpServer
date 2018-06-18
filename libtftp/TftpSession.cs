@@ -137,7 +137,7 @@ namespace libtftp
                     break;
 
                 case ETftpPacketType.Data:
-                    OnDataReceived(messageData);
+                    await OnDataReceivedAsync(messageData);
                     break;
 
                 case ETftpPacketType.Acknowledgement:
@@ -183,7 +183,7 @@ namespace libtftp
 
             if(TransmitBufferLength < 516)
             {
-                Parent.TransferComplete(this);
+                await Parent.TransferCompleteAsync(this);
                 return;
             }
 
@@ -244,7 +244,7 @@ namespace libtftp
             }
             else
             {
-                TransferStream = await Parent.GetReadStream(RemoteHost, request.Filename);
+                TransferStream = await Parent.GetReadStreamAsync(RemoteHost, request.Filename);
                 if(TransferStream == null)
                 {
                     TransmitError(ETftpErrorType.FileNotFound, "File not found");
@@ -258,7 +258,7 @@ namespace libtftp
             }
         }
 
-        private void OnDataReceived(byte[] messageData)
+        private async Task OnDataReceivedAsync(byte[] messageData)
         {
             if (messageData.Length < 4)
             {
@@ -300,7 +300,7 @@ namespace libtftp
             if (messageData.Length != 516)
             {
                 LogDebug("Last block received, transfer complete");
-                Parent.TransferComplete(this);
+                await Parent.TransferCompleteAsync(this);
             }
             else
             {

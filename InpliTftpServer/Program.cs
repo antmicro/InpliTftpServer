@@ -15,8 +15,12 @@ namespace InpliTftpServer
             libtftp.TftpServer.Instance.LogSeverity = libtftp.ETftpLogSeverity.Debug;
 
             libtftp.TftpServer.Instance.FileReceived +=
-                new EventHandler<libtftp.TftpTransferCompleteEventArgs>((sender, ev) =>
+                new EventHandler<libtftp.TftpTransferCompleteEventArgs>(async (sender, ev) =>
                 {
+                    ev.Stream.Position = 0;
+                    var reader = new StreamReader(ev.Stream);
+                    var buffer = await reader.ReadToEndAsync();
+
                     Console.WriteLine(
                         "Received file from " +
                         ev.RemoteHost.ToString() +
