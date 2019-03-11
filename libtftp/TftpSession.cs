@@ -17,6 +17,11 @@ namespace libtftp
     internal class TftpSession
     {
         /// <summary>
+        /// An auto generated session id
+        /// </summary>
+        public Guid Id { get; set; }
+
+        /// <summary>
         /// The parent/owner TftpServer object
         /// </summary>
         public TftpServer Parent { get; private set; }
@@ -74,6 +79,8 @@ namespace libtftp
 
         private int BlockTransmitCount = 0;
 
+        public long Position { get; private set; } = 0;
+
         /// <summary>
         /// Constructor
         /// </summary>
@@ -84,6 +91,7 @@ namespace libtftp
             Parent = parent;
             RemoteHost = remoteHost;
             IdleSince = DateTimeOffset.Now;
+            Id = Guid.NewGuid();
         }
 
         /// <summary>
@@ -167,10 +175,13 @@ namespace libtftp
                 {
                     var message = Encoding.UTF8.GetString(messageData, start, index - start);
                     LogError("Client error: " + errorCode.ToString() + ": " + message);
+                    Parent.UnregisterSession(this, message);
                 }
             }
-
-            Parent.UnregisterSession(this);
+            else
+            {
+                Parent.UnregisterSession(this, "unknown");
+            }
         }
 
         private async Task OnAcknowledgeAsync(byte[] messageData)
@@ -199,6 +210,7 @@ namespace libtftp
             if(TransmitBufferLength == 0)
             {
                 int bytesRead = await TransferStream.ReadAsync(TransmitBuffer, 4, 512);
+                Position += bytesRead;
 
                 TransmitBufferLength = bytesRead + 4;
                 CurrentBlock++;
@@ -244,7 +256,7 @@ namespace libtftp
             }
             else
             {
-                TransferStream = await Parent.GetReadStreamAsync(RemoteHost, request.Filename);
+                TransferStream = await Parent.GetReadStreamAsync(Id, RemoteHost, request.Filename);
                 if(TransferStream == null)
                 {
                     TransmitError(ETftpErrorType.FileNotFound, "File not found");

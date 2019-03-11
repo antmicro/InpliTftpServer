@@ -14,6 +14,11 @@ namespace libtftp
     public class TftpTransferCompleteEventArgs : EventArgs
     {
         /// <summary>
+        /// Session ID
+        /// </summary>
+        public Guid Id { get; set; }
+
+        /// <summary>
         /// Whether the transfer was send or receive
         /// </summary>
         public ETftpOperationType Operation { get; set; }
@@ -42,5 +47,10 @@ namespace libtftp
         /// For receive operations, the stream containing the transfered data
         /// </summary>
         public MemoryStream Stream { get; set; }
+
+        /// <summary>
+        /// The number of bytes that have been transferred
+        /// </summary>
+        public long Transferred { get; set; }
     }
 }

@@ -14,6 +14,11 @@ namespace libtftp
     public class TftpGetStreamEventArgs : EventArgs
     {
         /// <summary>
+        /// Session Id
+        /// </summary>
+        public Guid Id { get; set; }
+        
+        /// <summary>
         /// The remote host requesting the read
         /// </summary>
         public IPEndPoint RemoteHost { get; set; }

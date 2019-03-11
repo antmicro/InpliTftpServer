@@ -51,6 +51,26 @@ namespace libtftp
         public event Func<object, TftpTransferCompleteEventArgs, Task> FileTransmittedAsync;
 
         /// <summary>
+        /// An event handler for when an error occurs during file receive
+        /// </summary>
+        public EventHandler<TftpTransferErrorEventArgs> FileReceiveError;
+
+        /// <summary>
+        /// An async event handler for when a file is received
+        /// </summary>
+        public event Func<object, TftpTransferErrorEventArgs, Task> FileReceiveErrorAsync;
+
+        /// <summary>
+        /// An event handler for when an error occurs during file transmit
+        /// </summary>
+        public EventHandler<TftpTransferErrorEventArgs> FileTransmitError;
+
+        /// <summary>
+        /// An async event handler for when an error occurs during file transmit
+        /// </summary>
+        public event Func<object, TftpTransferErrorEventArgs, Task> FileTransmitErrorAsync;
+
+        /// <summary>
         /// An event called to log a message
         /// </summary>
         public EventHandler<TftpLogEventArgs> Log;
@@ -110,13 +130,65 @@ namespace libtftp
             PeriodicTimer.Start();
         }
 
-        private void PeriodicTimer_Elapsed(object sender, ElapsedEventArgs e)
+        private void EmitSessionError(TftpSession session, string reason)
+        {
+            EventHandler<TftpTransferErrorEventArgs> handler =
+                (session.Operation == ETftpOperationType.WriteOperation) ?
+                    FileReceiveError :
+                    FileTransmitError
+                    ;
+
+            var eventArgs = new TftpTransferErrorEventArgs
+            {
+                Id = session.Id,
+                Operation = session.Operation,
+                Filename = session.Filename,
+                RemoteHost = session.RemoteHost,
+                Stream = (session.Operation == ETftpOperationType.WriteOperation) ? (MemoryStream)session.TransferStream : null,
+                TransferInitiated = session.TransferRequestInitiated,
+                TransferCompleted = DateTimeOffset.Now,
+                Transferred = session.Position,
+                FailureReason = reason
+            };
+
+            handler?.Invoke(
+                this,
+                eventArgs
+            );
+
+            var invocationList =
+                (session.Operation == ETftpOperationType.WriteOperation) ?
+                    (FileReceiveErrorAsync?.GetInvocationList()) :
+                    (FileTransmitErrorAsync?.GetInvocationList())
+                    ;
+
+            if (invocationList == null)
+                return;
+
+            var handlerTasks = new Task[invocationList.Length];
+
+            for (int i = 0; i < invocationList.Length; i++)
+                handlerTasks[i] = ((Func<object, TftpTransferErrorEventArgs, Task>)invocationList[i])(this, eventArgs);
+
+            Task.WhenAll(handlerTasks);
+        }
+
+        private void ClearIdleSessions()
         {
             var now = DateTimeOffset.Now;
             var idledOutSessions = Sessions.Where(x => now.Subtract(x.Value.IdleSince) > MaximumIdleSession);
 
             foreach (var session in idledOutSessions)
-                UnregisterSession(session.Value);
+            {
+                UnregisterSession(session.Value, "timeout");
+            }
+        }
+
+        private void PeriodicTimer_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            var now = DateTimeOffset.Now;
+
+            ClearIdleSessions();
 
             var retransmitSessions = Sessions
                 .Where(x => 
@@ -134,12 +206,12 @@ namespace libtftp
             var timeReceived = DateTimeOffset.Now;
             var socket = result.AsyncState as UdpClient;
 
-            IPEndPoint source = new IPEndPoint(0, 0);
-            byte[] messageData = socket.EndReceive(result, ref source);
-
             try
             {
-                if(!Sessions.TryGetValue(source, out TftpSession session))
+                IPEndPoint source = new IPEndPoint(0, 0);
+                var messageData = socket.EndReceive(result, ref source);
+
+                if (!Sessions.TryGetValue(source, out TftpSession session))
                 {
                     session = new TftpSession(this, source);
                     Sessions[source] = session;
@@ -170,10 +242,11 @@ namespace libtftp
         /// <summary>
         /// Called by sessions to request a transfer stream from the host application
         /// </summary>
+        /// <param name="sessionId">Session Id</param>
         /// <param name="remoteHost">The remote host requesting the transfer</param>
         /// <param name="filename">The filename requested by the remote host</param>
         /// <returns></returns>
-        internal async Task<Stream> GetReadStreamAsync(IPEndPoint remoteHost, string filename)
+        internal async Task<Stream> GetReadStreamAsync(Guid sessionId, IPEndPoint remoteHost, string filename)
         {
             if(GetStream == null)
             {
@@ -183,6 +256,7 @@ namespace libtftp
 
             var eventArgs = new TftpGetStreamEventArgs
             {
+                Id = sessionId,
                 Filename = filename,
                 RemoteHost = remoteHost
             };
@@ -217,6 +291,18 @@ namespace libtftp
         }
 
         /// <summary>
+        /// Called by a session to remove itself when it's no longer needed
+        /// </summary>
+        /// <param name="tftpSession">The session to remove</param>
+        internal void UnregisterSession(TftpSession tftpSession, string errorReason)
+        {
+            if (!Sessions.TryRemove(tftpSession.RemoteHost, out TftpSession removedSession))
+                throw new Exception("Could not remove session " + tftpSession.RemoteHost.ToString() + " from known sessions");
+
+            EmitSessionError(tftpSession, errorReason);
+        }
+
+        /// <summary>
         /// Called by a session to signal that it's complete
         /// </summary>
         /// <param name="session">The transfer which is complete</param>
@@ -232,12 +318,14 @@ namespace libtftp
 
             var eventArgs = new TftpTransferCompleteEventArgs
             {
+                Id = session.Id,
                 Operation = session.Operation,
                 Filename = session.Filename,
                 RemoteHost = session.RemoteHost,
                 Stream = (session.Operation == ETftpOperationType.WriteOperation) ? (MemoryStream)session.TransferStream : null,
                 TransferInitiated = session.TransferRequestInitiated,
-                TransferCompleted = DateTimeOffset.Now
+                TransferCompleted = DateTimeOffset.Now,
+                Transferred = session.Position
             };
 
             handler?.Invoke(
