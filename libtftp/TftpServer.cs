@@ -10,6 +10,7 @@ namespace libtftp
     using System.Linq;
     using System.Net;
     using System.Net.Sockets;
+    using System.Runtime.InteropServices;
     using System.Threading.Tasks;
     using System.Timers;
 
@@ -110,6 +111,8 @@ namespace libtftp
         {
         }
 
+        public const int SIO_UDP_CONNRESET = -1744830452;
+
         /// <summary>
         /// Start the server
         /// </summary>
@@ -124,6 +127,21 @@ namespace libtftp
 
             Socket6 = new UdpClient(port, AddressFamily.InterNetworkV6);
             Socket6.BeginReceive(new AsyncCallback(OnUdpData), Socket6);
+
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                Socket.Client.IOControl(
+                    (IOControlCode)SIO_UDP_CONNRESET,
+                    new byte[] { 0, 0, 0, 0 },
+                    null
+                );
+                Socket6.Client.IOControl(
+                    (IOControlCode)SIO_UDP_CONNRESET,
+                    new byte[] { 0, 0, 0, 0 },
+                    null
+                );
+            }
 
             PeriodicTimer = new Timer(500);
             PeriodicTimer.Elapsed += PeriodicTimer_Elapsed;
@@ -213,6 +231,7 @@ namespace libtftp
 
                 if (!Sessions.TryGetValue(source, out TftpSession session))
                 {
+                    LogDebug($"New client detected from {source.Address}:{source.Port}");
                     session = new TftpSession(this, source);
                     Sessions[source] = session;
                 }
@@ -345,7 +364,23 @@ namespace libtftp
             var handlerTasks = new Task[invocationList.Length];
 
             for (int i = 0; i < invocationList.Length; i++)
-                handlerTasks[i] = ((Func<object, TftpTransferCompleteEventArgs, Task>)invocationList[i])(this, eventArgs);
+            {
+                handlerTasks[i] = 
+                    ((Func<object, TftpTransferCompleteEventArgs, Task>)invocationList[i])(
+                        this,
+                        new TftpTransferCompleteEventArgs
+                        {
+                            Id = session.Id,
+                            Operation = session.Operation,
+                            Filename = session.Filename,
+                            RemoteHost = session.RemoteHost,
+                            Stream = (session.Operation == ETftpOperationType.WriteOperation) ? (MemoryStream)session.TransferStream : null,
+                            TransferInitiated = session.TransferRequestInitiated,
+                            TransferCompleted = DateTimeOffset.Now,
+                            Transferred = session.Position
+                        }
+                    );
+            }
 
             await Task.WhenAll(handlerTasks);
         }

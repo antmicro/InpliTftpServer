@@ -33,7 +33,7 @@ internal static class BufferPrimitives
         if ((offset + 2) >= buffer.Length)
             throw new IndexOutOfRangeException();
 
-        buffer[offset] = (byte)((value >> 16) & 0xff);
+        buffer[offset] = (byte)((value >> 8) & 0xff);
         buffer[offset + 1] = (byte)(value & 0xff);
     }
 }
