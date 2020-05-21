@@ -1,6 +1,7 @@
 ﻿// Telenor Inpli TFTP Server Module
 //
 // Copyright 2018 Telenor Inpli AS Norway
+// Modified 2020 Antmicro <www.antmicro.com>
 
 namespace libtftp
 {
@@ -9,7 +10,6 @@ namespace libtftp
     using System.IO;
     using System.Linq;
     using System.Net;
-    using System.Net.Sockets;
     using System.Runtime.InteropServices;
     using System.Threading.Tasks;
     using System.Timers;
@@ -96,9 +96,10 @@ namespace libtftp
         /// </summary>
         public ETftpLogSeverity LogSeverity { get; set; } = ETftpLogSeverity.Informational;
 
-        private UdpClient Socket { get; set; }
-
-        private UdpClient Socket6 { get; set; }
+        /// <summary>
+        /// Response packet is ready.
+        /// </summary>
+        public Action<IPEndPoint, byte[], int> DataReady { get; set; }
 
         private Timer PeriodicTimer;
 
@@ -111,41 +112,53 @@ namespace libtftp
         {
         }
 
-        public const int SIO_UDP_CONNRESET = -1744830452;
+        public void Reset()
+        {
+            Sessions.Clear();
+        }
 
         /// <summary>
-        /// Start the server
+        /// Start the server (periodic timer)
         /// </summary>
-        /// <param name="port">The port to start it on</param>
-        public void Start(int port = 69)
+        public void Start()
         {
-            if (Socket != null)
-                throw new InvalidOperationException("Cannot start the server, it's already started");
-
-            Socket = new UdpClient(port);
-            Socket.BeginReceive(new AsyncCallback(OnUdpData), Socket);
-
-            Socket6 = new UdpClient(port, AddressFamily.InterNetworkV6);
-            Socket6.BeginReceive(new AsyncCallback(OnUdpData), Socket6);
-
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                Socket.Client.IOControl(
-                    (IOControlCode)SIO_UDP_CONNRESET,
-                    new byte[] { 0, 0, 0, 0 },
-                    null
-                );
-                Socket6.Client.IOControl(
-                    (IOControlCode)SIO_UDP_CONNRESET,
-                    new byte[] { 0, 0, 0, 0 },
-                    null
-                );
-            }
-
             PeriodicTimer = new Timer(500);
             PeriodicTimer.Elapsed += PeriodicTimer_Elapsed;
             PeriodicTimer.Start();
+        }
+
+        /// <summary>
+        /// Handle the incoming UDP packet
+        /// </summary>
+        public void OnUdpData(IPEndPoint source, byte[] messageData)
+        {
+            try
+            {
+                if (!Sessions.TryGetValue(source, out TftpSession session))
+                {
+                    LogDebug($"New client detected from {source.Address}:{source.Port}");
+                    session = new TftpSession(this, source);
+                    Sessions[source] = session;
+                }
+
+                var receiveTask =
+                    Task.Factory.StartNew(
+                        async () => {
+                            try
+                            {
+                                await session.OnReceiveAsync(messageData);
+                            }
+                            catch (Exception e)
+                            {
+                                LogError("Internal error: " + e.Message);
+                            }
+                        }
+                    );
+            }
+            catch (Exception e)
+            {
+                LogError("Internal error: " + e.Message);
+            }
         }
 
         private void EmitSessionError(TftpSession session, string reason)
@@ -217,45 +230,6 @@ namespace libtftp
             var handlerTasks = retransmitSessions.Select(x => Task.Factory.StartNew(() => x.Value.RetransmitAsync()));
 
             Task.WhenAll(handlerTasks);
-        }
-
-        private void OnUdpData(IAsyncResult result)
-        {
-            var timeReceived = DateTimeOffset.Now;
-            var socket = result.AsyncState as UdpClient;
-
-            try
-            {
-                IPEndPoint source = new IPEndPoint(0, 0);
-                var messageData = socket.EndReceive(result, ref source);
-
-                if (!Sessions.TryGetValue(source, out TftpSession session))
-                {
-                    LogDebug($"New client detected from {source.Address}:{source.Port}");
-                    session = new TftpSession(this, source);
-                    Sessions[source] = session;
-                }
-
-                var receiveTask =
-                    Task.Factory.StartNew(
-                        async () => {
-                            try
-                            {
-                                await session.OnReceiveAsync(messageData);
-                            }
-                            catch (Exception e)
-                            {
-                                LogError("Internal error: " + e.Message);
-                            }
-                        }
-                    );
-            }
-            catch (Exception e)
-            {
-                LogError("Internal error: " + e.Message);
-            }
-
-            socket.BeginReceive(new AsyncCallback(OnUdpData), socket);
         }
 
         /// <summary>
@@ -403,12 +377,7 @@ namespace libtftp
         /// <param name="length">The length of the data to transfer</param>
         internal void Transmit(IPEndPoint destination, byte[] buffer, int length)
         {
-            if (destination.AddressFamily == AddressFamily.InterNetwork)
-                Socket.Send(buffer, length, destination);
-            else if (destination.AddressFamily == AddressFamily.InterNetworkV6)
-                Socket6.Send(buffer, length, destination);
-            else
-                throw new NotImplementedException("Protocol not implemented");
+            DataReady?.Invoke(destination, buffer, length);
         }
 
         /// <summary>
@@ -417,8 +386,6 @@ namespace libtftp
         public void Dispose()
         {
             PeriodicTimer.Stop();
-            Socket.Close();
-            Socket6.Close();
         }
 
         /// <summary>
