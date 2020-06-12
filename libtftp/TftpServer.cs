@@ -141,19 +141,18 @@ namespace libtftp
                     Sessions[source] = session;
                 }
 
-                var receiveTask =
-                    Task.Factory.StartNew(
-                        async () => {
-                            try
-                            {
-                                await session.OnReceiveAsync(messageData);
-                            }
-                            catch (Exception e)
-                            {
-                                LogError("Internal error: " + e.Message);
-                            }
+                Task.Factory.StartNew(
+                    async () => {
+                        try
+                        {
+                            await session.OnReceiveAsync(messageData);
                         }
-                    );
+                        catch (Exception e)
+                        {
+                            LogError("Internal error: " + e.Message);
+                        }
+                    }
+                );
             }
             catch (Exception e)
             {
